@@ -11,6 +11,9 @@ let categoryDefs = [];
 let countdownInterval = null;
 let currentRole = null; // 'spy' | 'citizen'
 let hasVoted = false;
+let customUniverses = [];
+const CUSTOM_KEY = "ozel";
+const MIN_CUSTOM = 8;
 
 // ---- Ekran yönetimi --------------------------------------------------
 function showScreen(id) {
@@ -57,28 +60,77 @@ $("btn-join").onclick = () => {
 };
 
 // ---- Kategori seçimi ----------------------------------------------------
+function toggleCategory(key, chip) {
+  if (!isHost) return;
+  if (selectedCategories.has(key)) {
+    if (selectedCategories.size === 1) return; // en az bir kategori kalsın
+    selectedCategories.delete(key);
+  } else {
+    selectedCategories.add(key);
+  }
+  chip.classList.toggle("selected");
+  socket.emit("select_categories", { code: lobbyCode, categories: Array.from(selectedCategories) });
+}
+
+function makeChip(key, text) {
+  const chip = document.createElement("div");
+  chip.className = "category-chip" + (selectedCategories.has(key) ? " selected" : "");
+  chip.textContent = text;
+  chip.dataset.key = key;
+  chip.onclick = () => toggleCategory(key, chip);
+  return chip;
+}
+
 socket.emit("get_categories", (list) => {
   categoryDefs = list;
   const wrap = $("category-list");
   wrap.innerHTML = "";
   list.forEach((c) => {
-    const chip = document.createElement("div");
-    chip.className = "category-chip" + (selectedCategories.has(c.key) ? " selected" : "");
-    chip.textContent = `${c.emoji} ${c.label}`;
-    chip.dataset.key = c.key;
-    chip.onclick = () => {
-      if (!isHost) return;
-      if (selectedCategories.has(c.key)) {
-        if (selectedCategories.size === 1) return; // en az bir kategori kalsın
-        selectedCategories.delete(c.key);
-      } else {
-        selectedCategories.add(c.key);
-      }
-      chip.classList.toggle("selected");
-      socket.emit("select_categories", { code: lobbyCode, categories: Array.from(selectedCategories) });
-    };
-    wrap.appendChild(chip);
+    wrap.appendChild(makeChip(c.key, `${c.emoji} ${c.label}`));
   });
+  wrap.appendChild(makeChip(CUSTOM_KEY, `✍️ Kendi Listeniz (${customUniverses.length}/${MIN_CUSTOM})`));
+});
+
+// ---- Kendi Listeniz (özel kategori) --------------------------------------
+function renderCustomList() {
+  const ul = $("custom-universe-list");
+  ul.innerHTML = "";
+  customUniverses.forEach((name, i) => {
+    const li = document.createElement("li");
+    const span = document.createElement("span");
+    span.textContent = name;
+    li.appendChild(span);
+    if (isHost) {
+      const del = document.createElement("span");
+      del.className = "tag remove-custom";
+      del.textContent = "Sil";
+      del.onclick = () => socket.emit("remove_custom_universe", { code: lobbyCode, index: i });
+      li.appendChild(del);
+    }
+    ul.appendChild(li);
+  });
+  $("custom-count").textContent = customUniverses.length;
+  const chip = document.querySelector('.category-chip[data-key="ozel"]');
+  if (chip) chip.textContent = `✍️ Kendi Listeniz (${customUniverses.length}/${MIN_CUSTOM})`;
+}
+
+socket.on("custom_list_update", (data) => {
+  customUniverses = data.list || [];
+  renderCustomList();
+});
+
+function submitCustomUniverse() {
+  const input = $("input-custom-universe");
+  const val = input.value.trim();
+  if (!val) return;
+  socket.emit("add_custom_universe", { code: lobbyCode, value: val });
+  input.value = "";
+  input.focus();
+}
+
+$("btn-add-custom").onclick = submitCustomUniverse;
+$("input-custom-universe").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submitCustomUniverse();
 });
 
 $("btn-start-game").onclick = () => {
@@ -122,6 +174,7 @@ socket.on("lobby_update", (data) => {
     document.querySelectorAll(".category-chip").forEach((chip) => {
       chip.classList.toggle("selected", selectedCategories.has(chip.dataset.key));
     });
+    renderCustomList();
     showScreen("screen-lobby");
   }
 });

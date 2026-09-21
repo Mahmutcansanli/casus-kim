@@ -105,7 +105,12 @@ input[type="text"]:focus { border-color: var(--accent); }
 .player-list.votable li:active { border-color: var(--accent); }
 .player-list li.disconnected { opacity: 0.4; }
 .player-list li .tag { font-size: 12px; color: var(--accent-2); font-weight: 700; }
+.player-list li .remove-custom { cursor: pointer; color: var(--danger); }
 .player-list li.voted-self { border-color: var(--accent-2); }
+
+.inline-add { display: flex; gap: 8px; margin: 8px 0 12px; }
+.inline-add input[type="text"] { flex: 1; margin-top: 0; }
+.inline-add .btn { padding: 12px 16px; }
 
 .category-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .category-chip {

@@ -11,6 +11,9 @@ const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 const ROUND_DURATION_MS = 5 * 60 * 1000; // 5 dakika
 const SPY_OPTION_COUNT = 10; // casusun göreceği evren seçeneği sayısı
+const CUSTOM_CATEGORY_KEY = "ozel";
+const MIN_CUSTOM_UNIVERSES = 8; // "Kendi Listeniz" kategorisinin oynanabilmesi için gereken min. madde
+const MAX_CUSTOM_UNIVERSES = 60;
 
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -183,6 +186,7 @@ io.on("connection", (socket) => {
       roundEndsAt: null,
       roundTimeout: null,
       votes: new Map(),
+      customUniverses: [],
     };
     lobby.players.set(socket.id, { id: socket.id, name, connected: true, score: 0 });
     lobbies.set(code, lobby);
@@ -211,15 +215,43 @@ io.on("connection", (socket) => {
     socket.data.lobbyCode = code;
 
     if (typeof cb === "function") cb({ success: true, code, playerId: socket.id, hostId: lobby.hostId });
+    socket.emit("custom_list_update", { list: lobby.customUniverses });
     broadcastLobby(lobby);
   });
 
   socket.on("select_categories", ({ code, categories }) => {
     const lobby = lobbies.get(code);
     if (!lobby || socket.id !== lobby.hostId) return;
-    const valid = (categories || []).filter((c) => CATEGORIES[c]);
+    const valid = (categories || []).filter((c) => CATEGORIES[c] || c === CUSTOM_CATEGORY_KEY);
     lobby.selectedCategories = valid.length ? valid : lobby.selectedCategories;
     broadcastLobby(lobby);
+  });
+
+  socket.on("add_custom_universe", ({ code, value }) => {
+    const lobby = lobbies.get(code);
+    if (!lobby || lobby.state !== "lobby") return;
+    if (!lobby.players.has(socket.id)) return;
+    const clean = (value || "").trim().slice(0, 40);
+    if (!clean) return;
+    const exists = lobby.customUniverses.some((u) => u.toLowerCase() === clean.toLowerCase());
+    if (exists) {
+      socket.emit("error_message", "Bu isim zaten eklenmiş.");
+      return;
+    }
+    if (lobby.customUniverses.length >= MAX_CUSTOM_UNIVERSES) {
+      socket.emit("error_message", `Liste doldu (maksimum ${MAX_CUSTOM_UNIVERSES}).`);
+      return;
+    }
+    lobby.customUniverses.push(clean);
+    io.to(lobby.code).emit("custom_list_update", { list: lobby.customUniverses });
+  });
+
+  socket.on("remove_custom_universe", ({ code, index }) => {
+    const lobby = lobbies.get(code);
+    if (!lobby || socket.id !== lobby.hostId) return;
+    if (typeof index !== "number" || index < 0 || index >= lobby.customUniverses.length) return;
+    lobby.customUniverses.splice(index, 1);
+    io.to(lobby.code).emit("custom_list_update", { list: lobby.customUniverses });
   });
 
   socket.on("start_game", ({ code }) => {
@@ -235,9 +267,24 @@ io.on("connection", (socket) => {
       return;
     }
 
+    // "Kendi Listeniz" kategorisi yeterli maddeye sahip değilse o turluk devre dışı bırak
+    const effectiveCategories = lobby.selectedCategories.filter((c) => {
+      if (c === CUSTOM_CATEGORY_KEY) return lobby.customUniverses.length >= MIN_CUSTOM_UNIVERSES;
+      return true;
+    });
+    if (!effectiveCategories.length) {
+      const onlyCustomSelected =
+        lobby.selectedCategories.length === 1 && lobby.selectedCategories[0] === CUSTOM_CATEGORY_KEY;
+      const msg = onlyCustomSelected
+        ? `"Kendi Listeniz" için en az ${MIN_CUSTOM_UNIVERSES} isim ekleyin (şu an ${lobby.customUniverses.length}/${MIN_CUSTOM_UNIVERSES}).`
+        : "En az bir kategori seçin.";
+      socket.emit("error_message", msg);
+      return;
+    }
+
     // Kategori ve evren seç
-    const categoryKey = lobby.selectedCategories[Math.floor(Math.random() * lobby.selectedCategories.length)];
-    const pool = CATEGORIES[categoryKey].universes;
+    const categoryKey = effectiveCategories[Math.floor(Math.random() * effectiveCategories.length)];
+    const pool = categoryKey === CUSTOM_CATEGORY_KEY ? lobby.customUniverses : CATEGORIES[categoryKey].universes;
     const universe = pool[Math.floor(Math.random() * pool.length)];
 
     // Casus seç
@@ -255,12 +302,17 @@ io.on("connection", (socket) => {
     const distractors = pickRandom(others, Math.min(SPY_OPTION_COUNT - 1, others.length));
     const spyOptions = shuffle([universe, ...distractors]);
 
+    const categoryMeta =
+      categoryKey === CUSTOM_CATEGORY_KEY
+        ? { label: "Kendi Listeniz", emoji: "✍️" }
+        : CATEGORIES[categoryKey];
+
     for (const p of players) {
       const isSpy = p.id === spy.id;
       io.to(p.id).emit("game_started", {
         role: isSpy ? "spy" : "citizen",
-        categoryLabel: CATEGORIES[categoryKey].label,
-        categoryEmoji: CATEGORIES[categoryKey].emoji,
+        categoryLabel: categoryMeta.label,
+        categoryEmoji: categoryMeta.emoji,
         universe: isSpy ? null : universe,
         options: isSpy ? spyOptions : null,
         roundEndsAt: lobby.roundEndsAt,

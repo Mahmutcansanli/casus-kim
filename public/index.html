@@ -47,6 +47,16 @@
       <h3>Oyuncular (<span id="player-count">0</span>)</h3>
       <ul id="player-list" class="player-list"></ul>
 
+      <div id="custom-category-box">
+        <h3>✍️ Kendi Listeniz</h3>
+        <p class="hint">Herkes buraya oynanacak isim/evren önerebilir (herkes görür). Bu kategorinin seçilip oynanabilmesi için en az <strong>8</strong> farklı öneri gerekir. (<span id="custom-count">0</span>/8)</p>
+        <div class="inline-add">
+          <input id="input-custom-universe" type="text" placeholder="Örn: Dedemin Bahçesi" maxlength="40" autocomplete="off" />
+          <button id="btn-add-custom" class="btn secondary">Ekle</button>
+        </div>
+        <ul id="custom-universe-list" class="player-list"></ul>
+      </div>
+
       <div id="host-controls" class="hidden">
         <h3>Kategoriler</h3>
         <div id="category-list" class="category-list"></div>
