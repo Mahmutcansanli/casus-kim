@@ -117,6 +117,10 @@ $("btn-join").onclick = () => {
 };
 
 // ---- Kategori seçimi ----------------------------------------------------
+function updateCustomBoxVisibility() {
+  $("custom-category-box").classList.toggle("hidden", !selectedCategories.has(CUSTOM_KEY));
+}
+
 function toggleCategory(key, chip) {
   if (!isHost) return;
   if (selectedCategories.has(key)) {
@@ -126,6 +130,7 @@ function toggleCategory(key, chip) {
     selectedCategories.add(key);
   }
   chip.classList.toggle("selected");
+  updateCustomBoxVisibility();
   socket.emit("select_categories", { code: lobbyCode, categories: Array.from(selectedCategories) });
 }
 
@@ -297,6 +302,7 @@ socket.on("lobby_update", (data) => {
     document.querySelectorAll(".category-chip").forEach((chip) => {
       chip.classList.toggle("selected", selectedCategories.has(chip.dataset.key));
     });
+    updateCustomBoxVisibility();
     renderCustomList();
     renderDurationChips(currentMinutes);
     showScreen("screen-lobby");
