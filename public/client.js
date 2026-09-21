@@ -50,6 +50,8 @@ showScreen(loadSession() ? "screen-reconnecting" : "screen-name");
 
 // Güvenlik ağı: soket hiç bağlanamazsa (sunucu tamamen erişilemezse) bile
 // kullanıcı "Bağlanıyor…" ekranında sonsuza kadar takılı kalmasın.
+// NOT: Render'ın ücretsiz planında sunucu uykudayken ilk isteğin cevap vermesi
+// 50 saniyeden fazla sürebiliyor, bu yüzden süre bilerek uzun tutuldu.
 if (loadSession()) {
   setTimeout(() => {
     if ($("screen-reconnecting").classList.contains("active")) {
@@ -57,7 +59,7 @@ if (loadSession()) {
       showScreen("screen-name");
       $("name-error").textContent = "Sunucuya bağlanılamadı. İnternetini kontrol edip tekrar dene.";
     }
-  }, 15000);
+  }, 75000);
 }
 
 // Hem sayfa yenilenmesinden hem de oyun ortasında kısa bir bağlantı kopmasından
@@ -77,7 +79,7 @@ socket.on("connect", () => {
   // .timeout(): sunucu cevap vermeden bağlantı koparsa (oda kapanmış, sunucu
   // uykudan yeni uyanıyor vb.) sonsuza kadar beklemek yerine belirli bir süre
   // sonra "err" ile geri döner, böylece kullanıcı ekranda asla takılı kalmaz.
-  socket.timeout(8000).emit("rejoin_lobby", { code: session.code, token: session.token }, (err, res) => {
+  socket.timeout(20000).emit("rejoin_lobby", { code: session.code, token: session.token }, (err, res) => {
     if (!err && res && res.success) {
       myId = res.playerId;
       myName = res.name || session.name || myName;
