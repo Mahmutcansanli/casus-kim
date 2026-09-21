@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Casus Kim?</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- EKRAN: Giriş -->
+  <section id="screen-name" class="screen active">
+    <div class="card">
+      <h1>🕵️ Casus Kim?</h1>
+      <p class="subtitle">Arkadaşlarınla oyna, casusu bul ya da casus ol!</p>
+      <input id="input-name" type="text" placeholder="Adını yaz" maxlength="20" autocomplete="off" />
+      <div class="btn-row">
+        <button id="btn-goto-create" class="btn primary">Yeni Oyun Kur</button>
+        <button id="btn-goto-join" class="btn secondary">Kodla Katıl</button>
+      </div>
+      <p id="name-error" class="error"></p>
+    </div>
+  </section>
+
+  <!-- EKRAN: Kodla katıl -->
+  <section id="screen-join" class="screen">
+    <div class="card">
+      <h2>Oyuna Katıl</h2>
+      <input id="input-code" type="text" placeholder="Oyun Kodu (örn: AB12C)" maxlength="6" autocomplete="off" style="text-transform:uppercase" />
+      <div class="btn-row">
+        <button id="btn-back-1" class="btn secondary">Geri</button>
+        <button id="btn-join" class="btn primary">Katıl</button>
+      </div>
+      <p id="join-error" class="error"></p>
+    </div>
+  </section>
+
+  <!-- EKRAN: Lobi -->
+  <section id="screen-lobby" class="screen">
+    <div class="card">
+      <div class="lobby-header">
+        <h2>Lobi</h2>
+        <div class="lobby-code">Kod: <span id="lobby-code-text">-----</span></div>
+      </div>
+
+      <h3>Oyuncular (<span id="player-count">0</span>)</h3>
+      <ul id="player-list" class="player-list"></ul>
+
+      <div id="host-controls" class="hidden">
+        <h3>Kategoriler</h3>
+        <div id="category-list" class="category-list"></div>
+        <button id="btn-start-game" class="btn primary full">🚀 Oyunu Başlat</button>
+        <p class="hint">Başlamak için en az 3 oyuncu gerekir.</p>
+      </div>
+      <div id="guest-waiting" class="hidden">
+        <p class="hint">Host'un oyunu başlatması bekleniyor…</p>
+      </div>
+
+      <p id="lobby-error" class="error"></p>
+      <button id="btn-leave-lobby" class="btn text">Lobiden Ayrıl</button>
+    </div>
+  </section>
+
+  <!-- EKRAN: Oyun (rol gösterimi + süre) -->
+  <section id="screen-game" class="screen">
+    <div class="card">
+      <div id="timer-box" class="timer-box">
+        <div id="timer-text">05:00</div>
+      </div>
+
+      <div id="role-citizen" class="hidden">
+        <div class="role-badge citizen">👤 SİVİLSİN</div>
+        <p class="hint">Aşağıdaki evreni biliyorsun. Kimseye direkt söyleme, sorularla anla kim bilmiyor!</p>
+        <div id="universe-box" class="universe-box"></div>
+      </div>
+
+      <div id="role-spy" class="hidden">
+        <div class="role-badge spy">🕵️ CASUSSUN</div>
+        <p class="hint">Gerçek evreni bilmiyorsun. Aşağıdaki 10 olasılıktan biri doğru. Sorulara mantıklı cevap ver, belli etme!</p>
+        <div id="spy-options" class="spy-options"></div>
+        <button id="btn-spy-guess" class="btn danger full">🎯 Evreni Tahmin Ettim</button>
+      </div>
+
+      <div class="btn-row" style="margin-top:16px">
+        <button id="btn-start-vote" class="btn secondary full">🗳️ Casusu Oyla</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- EKRAN: Casus tahmin modalı -->
+  <section id="screen-spy-guess" class="screen">
+    <div class="card">
+      <h2>🎯 Evreni Tahmin Et</h2>
+      <p class="hint">Doğru tahmin edersen anında kazanırsın. Yanlış tahmin edersen anında kaybedersin!</p>
+      <div id="spy-guess-options" class="spy-options"></div>
+      <button id="btn-cancel-guess" class="btn text full">Vazgeç</button>
+    </div>
+  </section>
+
+  <!-- EKRAN: Oylama -->
+  <section id="screen-vote" class="screen">
+    <div class="card">
+      <h2>🗳️ Casus kim sence?</h2>
+      <p id="vote-progress" class="hint">0 / 0 oy verdi</p>
+      <ul id="vote-list" class="player-list votable"></ul>
+      <button id="btn-force-tally" class="btn secondary full hidden">Oylamayı Şimdi Bitir (Host)</button>
+    </div>
+  </section>
+
+  <!-- EKRAN: Sonuç -->
+  <section id="screen-result" class="screen">
+    <div class="card">
+      <h2 id="result-title">Sonuç</h2>
+      <div id="result-body"></div>
+      <div id="host-result-controls" class="hidden">
+        <button id="btn-new-round" class="btn primary full">🔁 Yeni Tur</button>
+      </div>
+      <div id="guest-result-controls" class="hidden">
+        <p class="hint">Host'un yeni tur başlatması bekleniyor…</p>
+      </div>
+      <button id="btn-leave-result" class="btn text full">Lobiden Ayrıl</button>
+    </div>
+  </section>
+
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="client.js"></script>
+</body>
+</html>
