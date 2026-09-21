@@ -1,0 +1,37 @@
+[33mcommit 2824fbbda1aa04975b8078d7591d13b4961d3c91[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m
+Author: Mahmutcan Sanli <mahmutcansanli@outlook.com>
+Date:   Mon Sep 21 14:51:55 2026 +0300
+
+    Sure secme cipleri ayri sinifa alindi, tiklama sorunu duzeltildi
+
+[1mdiff --git a/public/client.js b/public/client.js[m
+[1mindex fddf599..93e06f9 100644[m
+[1m--- a/public/client.js[m
+[1m+++ b/public/client.js[m
+[36m@@ -50,6 +50,8 @@[m [mshowScreen(loadSession() ? "screen-reconnecting" : "screen-name");[m
+ [m
+ // Güvenlik ağı: soket hiç bağlanamazsa (sunucu tamamen erişilemezse) bile[m
+ // kullanıcı "Bağlanıyor…" ekranında sonsuza kadar takılı kalmasın.[m
+[32m+[m[32m// NOT: Render'ın ücretsiz planında sunucu uykudayken ilk isteğin cevap vermesi[m
+[32m+[m[32m// 50 saniyeden fazla sürebiliyor, bu yüzden süre bilerek uzun tutuldu.[m
+ if (loadSession()) {[m
+   setTimeout(() => {[m
+     if ($("screen-reconnecting").classList.contains("active")) {[m
+[36m@@ -57,7 +59,7 @@[m [mif (loadSession()) {[m
+       showScreen("screen-name");[m
+       $("name-error").textContent = "Sunucuya bağlanılamadı. İnternetini kontrol edip tekrar dene.";[m
+     }[m
+[31m-  }, 15000);[m
+[32m+[m[32m  }, 75000);[m
+ }[m
+ [m
+ // Hem sayfa yenilenmesinden hem de oyun ortasında kısa bir bağlantı kopmasından[m
+[36m@@ -77,7 +79,7 @@[m [msocket.on("connect", () => {[m
+   // .timeout(): sunucu cevap vermeden bağlantı koparsa (oda kapanmış, sunucu[m
+   // uykudan yeni uyanıyor vb.) sonsuza kadar beklemek yerine belirli bir süre[m
+   // sonra "err" ile geri döner, böylece kullanıcı ekranda asla takılı kalmaz.[m
+[31m-  socket.timeout(8000).emit("rejoin_lobby", { code: session.code, token: session.token }, (err, res) => {[m
+[32m+[m[32m  socket.timeout(20000).emit("rejoin_lobby", { code: session.code, token: session.token }, (err, res) => {[m
+     if (!err && res && res.success) {[m
+       myId = res.playerId;[m
+       myName = res.name || session.name || myName;[m

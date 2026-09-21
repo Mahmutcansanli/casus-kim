@@ -1,4 +1,5 @@
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -9,15 +10,22 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
-const ROUND_DURATION_MS = 5 * 60 * 1000; // 5 dakika
+const DEFAULT_ROUND_DURATION_MS = 5 * 60 * 1000; // 5 dakika
+const MIN_ROUND_MINUTES = 1;
+const MAX_ROUND_MINUTES = 30;
 const SPY_OPTION_COUNT = 10; // casusun göreceği evren seçeneği sayısı
 const CUSTOM_CATEGORY_KEY = "ozel";
 const MIN_CUSTOM_UNIVERSES = 8; // "Kendi Listeniz" kategorisinin oynanabilmesi için gereken min. madde
 const MAX_CUSTOM_UNIVERSES = 60;
+const DISCONNECT_GRACE_MS = 60 * 1000; // lobi tamamen boşalınca temizlemeden önce bekleme süresi
 
 app.use(express.static(path.join(__dirname, "public")));
 
 // ---- Yardımcı fonksiyonlar --------------------------------------------
+
+function makeToken() {
+  return crypto.randomBytes(12).toString("hex");
+}
 
 function makeLobbyCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // karışabilecek harfler yok
@@ -44,16 +52,19 @@ function pickRandom(arr, n) {
 // ---- Oyun / Lobi durumu ------------------------------------------------
 // lobbies: Map<code, Lobby>
 // Lobby = {
-//   code, hostId, players: Map<playerId, {id,name,connected,score}>,
+//   code,
+//   hostId,                 // host oyuncunun TOKEN'ı
+//   players: Map<token, {token,name,connected,score,socketId}>,
 //   selectedCategories: string[], state: 'lobby'|'playing'|'voting'|'ended',
-//   universe, categoryKey, spyId, roundEndsAt, roundTimeout,
-//   votes: Map<voterId, targetId>, spyGuessed
+//   universe, categoryKey, categoryMeta, spyId (TOKEN), spyOptions,
+//   roundEndsAt, roundDurationMs, roundTimeout,
+//   votes: Map<voterToken, targetToken>, customUniverses, lastResult,
 // }
 const lobbies = new Map();
 
 function publicPlayers(lobby) {
   return Array.from(lobby.players.values()).map((p) => ({
-    id: p.id,
+    id: p.token,
     name: p.name,
     connected: p.connected,
     score: p.score,
@@ -67,6 +78,7 @@ function broadcastLobby(lobby) {
     players: publicPlayers(lobby),
     selectedCategories: lobby.selectedCategories,
     state: lobby.state,
+    roundDurationMs: lobby.roundDurationMs,
   });
 }
 
@@ -81,11 +93,16 @@ function clearRoundTimer(lobby) {
   }
 }
 
+function emitResult(lobby, payload) {
+  lobby.lastResult = payload;
+  io.to(lobby.code).emit("round_result", payload);
+}
+
 function endRoundBySpyGuess(lobby, correct) {
   clearRoundTimer(lobby);
   lobby.state = "ended";
   const spy = lobby.players.get(lobby.spyId);
-  io.to(lobby.code).emit("round_result", {
+  emitResult(lobby, {
     reason: correct ? "spy_guessed_correctly" : "spy_guessed_wrong",
     spyWon: correct,
     spyId: lobby.spyId,
@@ -102,7 +119,7 @@ function autoStartVoteOnTimeout(lobby) {
   lobby.state = "voting";
   lobby.votes = new Map();
   io.to(lobby.code).emit("vote_started", {
-    players: publicPlayers(lobby).filter((p) => p.id !== lobby.spyId || true), // herkes oy kullanabilir (casus dahil, isterse)
+    players: publicPlayers(lobby),
     reason: "timeout",
   });
   broadcastLobby(lobby);
@@ -134,12 +151,7 @@ function tallyVotesAndFinish(lobby, reason) {
   const spy = lobby.players.get(lobby.spyId);
   const accused = accusedId ? lobby.players.get(accusedId) : null;
 
-  if (spyCaught && spy) spy.score += 0; // casus yakalandı, puan vermiyoruz (basit tutuyoruz)
-  if (!spyCaught) {
-    // sivillerin hepsine değil, basitlik için sadece genel skor tutmuyoruz
-  }
-
-  io.to(lobby.code).emit("round_result", {
+  emitResult(lobby, {
     reason,
     spyWon: !spyCaught,
     spyId: lobby.spyId,
@@ -156,10 +168,22 @@ function tallyVotesAndFinish(lobby, reason) {
   broadcastLobby(lobby);
 }
 
+function scheduleEmptyLobbyCleanup(lobby) {
+  setTimeout(() => {
+    if (!lobbies.has(lobby.code)) return;
+    const stillEmpty = Array.from(lobby.players.values()).every((p) => !p.connected);
+    if (stillEmpty) {
+      clearRoundTimer(lobby);
+      lobbies.delete(lobby.code);
+    }
+  }, DISCONNECT_GRACE_MS);
+}
+
 // ---- Socket.io olayları --------------------------------------------
 
 io.on("connection", (socket) => {
   socket.data.lobbyCode = null;
+  socket.data.playerToken = null;
 
   socket.on("get_categories", (cb) => {
     const list = Object.entries(CATEGORIES).map(([key, v]) => ({
@@ -174,27 +198,33 @@ io.on("connection", (socket) => {
   socket.on("create_lobby", ({ name }, cb) => {
     name = (name || "").trim().slice(0, 20) || "Oyuncu";
     const code = makeLobbyCode();
+    const token = makeToken();
     const lobby = {
       code,
-      hostId: socket.id,
+      hostId: token,
       players: new Map(),
       selectedCategories: ["oyun", "film", "dizi"],
       state: "lobby",
       universe: null,
       categoryKey: null,
+      categoryMeta: null,
       spyId: null,
+      spyOptions: null,
       roundEndsAt: null,
+      roundDurationMs: DEFAULT_ROUND_DURATION_MS,
       roundTimeout: null,
       votes: new Map(),
       customUniverses: [],
+      lastResult: null,
     };
-    lobby.players.set(socket.id, { id: socket.id, name, connected: true, score: 0 });
+    lobby.players.set(token, { token, name, connected: true, score: 0, socketId: socket.id });
     lobbies.set(code, lobby);
 
     socket.join(code);
     socket.data.lobbyCode = code;
+    socket.data.playerToken = token;
 
-    if (typeof cb === "function") cb({ success: true, code, playerId: socket.id });
+    if (typeof cb === "function") cb({ success: true, code, playerId: token });
     broadcastLobby(lobby);
   });
 
@@ -210,27 +240,84 @@ io.on("connection", (socket) => {
       if (typeof cb === "function") cb({ success: false, error: "Oyun zaten başladı, katılamazsınız." });
       return;
     }
-    lobby.players.set(socket.id, { id: socket.id, name, connected: true, score: 0 });
+    const token = makeToken();
+    lobby.players.set(token, { token, name, connected: true, score: 0, socketId: socket.id });
     socket.join(code);
     socket.data.lobbyCode = code;
+    socket.data.playerToken = token;
 
-    if (typeof cb === "function") cb({ success: true, code, playerId: socket.id, hostId: lobby.hostId });
+    if (typeof cb === "function") cb({ success: true, code, playerId: token, hostId: lobby.hostId });
     socket.emit("custom_list_update", { list: lobby.customUniverses });
+    broadcastLobby(lobby);
+  });
+
+  // Sayfa yenileme / bağlantı kopması sonrası aynı oyuncu kimliğiyle geri dönüş
+  socket.on("rejoin_lobby", ({ code, token }, cb) => {
+    code = (code || "").trim().toUpperCase();
+    const lobby = lobbies.get(code);
+    if (!lobby || !token || !lobby.players.has(token)) {
+      if (typeof cb === "function") cb({ success: false });
+      return;
+    }
+    const player = lobby.players.get(token);
+    player.connected = true;
+    player.socketId = socket.id;
+    socket.join(code);
+    socket.data.lobbyCode = code;
+    socket.data.playerToken = token;
+
+    if (typeof cb === "function") {
+      cb({ success: true, code, playerId: token, hostId: lobby.hostId, name: player.name, state: lobby.state });
+    }
+
+    socket.emit("custom_list_update", { list: lobby.customUniverses });
+
+    if (lobby.state === "playing" && lobby.categoryMeta) {
+      const isSpy = token === lobby.spyId;
+      socket.emit("game_started", {
+        role: isSpy ? "spy" : "citizen",
+        categoryLabel: lobby.categoryMeta.label,
+        categoryEmoji: lobby.categoryMeta.emoji,
+        universe: isSpy ? null : lobby.universe,
+        options: isSpy ? lobby.spyOptions : null,
+        roundEndsAt: lobby.roundEndsAt,
+        durationMs: lobby.roundDurationMs,
+      });
+    } else if (lobby.state === "voting") {
+      socket.emit("vote_started", { players: publicPlayers(lobby), reason: "rejoin" });
+      socket.emit("vote_progress", {
+        votesIn: lobby.votes.size,
+        totalPlayers: activePlayers(lobby).length,
+      });
+    } else if (lobby.state === "ended" && lobby.lastResult) {
+      socket.emit("round_result", lobby.lastResult);
+    }
+
     broadcastLobby(lobby);
   });
 
   socket.on("select_categories", ({ code, categories }) => {
     const lobby = lobbies.get(code);
-    if (!lobby || socket.id !== lobby.hostId) return;
+    if (!lobby || socket.data.playerToken !== lobby.hostId) return;
     const valid = (categories || []).filter((c) => CATEGORIES[c] || c === CUSTOM_CATEGORY_KEY);
     lobby.selectedCategories = valid.length ? valid : lobby.selectedCategories;
+    broadcastLobby(lobby);
+  });
+
+  socket.on("set_round_duration", ({ code, minutes }) => {
+    const lobby = lobbies.get(code);
+    if (!lobby || socket.data.playerToken !== lobby.hostId) return;
+    if (lobby.state !== "lobby") return;
+    const m = Number(minutes);
+    if (!Number.isFinite(m) || m < MIN_ROUND_MINUTES || m > MAX_ROUND_MINUTES) return;
+    lobby.roundDurationMs = Math.round(m * 60 * 1000);
     broadcastLobby(lobby);
   });
 
   socket.on("add_custom_universe", ({ code, value }) => {
     const lobby = lobbies.get(code);
     if (!lobby || lobby.state !== "lobby") return;
-    if (!lobby.players.has(socket.id)) return;
+    if (!lobby.players.has(socket.data.playerToken)) return;
     const clean = (value || "").trim().slice(0, 40);
     if (!clean) return;
     const exists = lobby.customUniverses.some((u) => u.toLowerCase() === clean.toLowerCase());
@@ -246,9 +333,29 @@ io.on("connection", (socket) => {
     io.to(lobby.code).emit("custom_list_update", { list: lobby.customUniverses });
   });
 
+  socket.on("add_custom_universes_bulk", ({ code, values }) => {
+    const lobby = lobbies.get(code);
+    if (!lobby || lobby.state !== "lobby") return;
+    if (!lobby.players.has(socket.data.playerToken)) return;
+    const arr = Array.isArray(values) ? values : [];
+    let added = 0;
+    for (const raw of arr) {
+      if (lobby.customUniverses.length >= MAX_CUSTOM_UNIVERSES) break;
+      const clean = (raw || "").trim().slice(0, 40);
+      if (!clean) continue;
+      const exists = lobby.customUniverses.some((u) => u.toLowerCase() === clean.toLowerCase());
+      if (exists) continue;
+      lobby.customUniverses.push(clean);
+      added++;
+    }
+    if (added > 0) {
+      io.to(lobby.code).emit("custom_list_update", { list: lobby.customUniverses });
+    }
+  });
+
   socket.on("remove_custom_universe", ({ code, index }) => {
     const lobby = lobbies.get(code);
-    if (!lobby || socket.id !== lobby.hostId) return;
+    if (!lobby || socket.data.playerToken !== lobby.hostId) return;
     if (typeof index !== "number" || index < 0 || index >= lobby.customUniverses.length) return;
     lobby.customUniverses.splice(index, 1);
     io.to(lobby.code).emit("custom_list_update", { list: lobby.customUniverses });
@@ -256,7 +363,7 @@ io.on("connection", (socket) => {
 
   socket.on("start_game", ({ code }) => {
     const lobby = lobbies.get(code);
-    if (!lobby || socket.id !== lobby.hostId) return;
+    if (!lobby || socket.data.playerToken !== lobby.hostId) return;
     const players = activePlayers(lobby);
     if (players.length < 3) {
       socket.emit("error_message", "Oyuna başlamak için en az 3 oyuncu gerekiyor.");
@@ -292,44 +399,42 @@ io.on("connection", (socket) => {
 
     lobby.state = "playing";
     lobby.categoryKey = categoryKey;
+    lobby.categoryMeta =
+      categoryKey === CUSTOM_CATEGORY_KEY ? { label: "Kendi Listeniz", emoji: "✍️" } : CATEGORIES[categoryKey];
     lobby.universe = universe;
-    lobby.spyId = spy.id;
+    lobby.spyId = spy.token;
     lobby.votes = new Map();
-    lobby.roundEndsAt = Date.now() + ROUND_DURATION_MS;
+    lobby.roundEndsAt = Date.now() + lobby.roundDurationMs;
+    lobby.lastResult = null;
 
     // Casusun göreceği seçenekler: doğru evren + aynı kategoriden diğerleri
     const others = pool.filter((u) => u !== universe);
     const distractors = pickRandom(others, Math.min(SPY_OPTION_COUNT - 1, others.length));
-    const spyOptions = shuffle([universe, ...distractors]);
-
-    const categoryMeta =
-      categoryKey === CUSTOM_CATEGORY_KEY
-        ? { label: "Kendi Listeniz", emoji: "✍️" }
-        : CATEGORIES[categoryKey];
+    lobby.spyOptions = shuffle([universe, ...distractors]);
 
     for (const p of players) {
-      const isSpy = p.id === spy.id;
-      io.to(p.id).emit("game_started", {
+      const isSpy = p.token === spy.token;
+      io.to(p.socketId).emit("game_started", {
         role: isSpy ? "spy" : "citizen",
-        categoryLabel: categoryMeta.label,
-        categoryEmoji: categoryMeta.emoji,
+        categoryLabel: lobby.categoryMeta.label,
+        categoryEmoji: lobby.categoryMeta.emoji,
         universe: isSpy ? null : universe,
-        options: isSpy ? spyOptions : null,
+        options: isSpy ? lobby.spyOptions : null,
         roundEndsAt: lobby.roundEndsAt,
-        durationMs: ROUND_DURATION_MS,
+        durationMs: lobby.roundDurationMs,
       });
     }
 
     broadcastLobby(lobby);
 
     clearRoundTimer(lobby);
-    lobby.roundTimeout = setTimeout(() => autoStartVoteOnTimeout(lobby), ROUND_DURATION_MS);
+    lobby.roundTimeout = setTimeout(() => autoStartVoteOnTimeout(lobby), lobby.roundDurationMs);
   });
 
   socket.on("spy_guess", ({ code, guess }) => {
     const lobby = lobbies.get(code);
     if (!lobby || lobby.state !== "playing") return;
-    if (socket.id !== lobby.spyId) return;
+    if (socket.data.playerToken !== lobby.spyId) return;
     const correct = (guess || "").trim() === lobby.universe;
     endRoundBySpyGuess(lobby, correct);
   });
@@ -350,8 +455,9 @@ io.on("connection", (socket) => {
   socket.on("cast_vote", ({ code, targetId }) => {
     const lobby = lobbies.get(code);
     if (!lobby || lobby.state !== "voting") return;
-    if (!lobby.players.has(socket.id)) return;
-    lobby.votes.set(socket.id, targetId);
+    const voterToken = socket.data.playerToken;
+    if (!lobby.players.has(voterToken)) return;
+    lobby.votes.set(voterToken, targetId);
 
     const activeCount = activePlayers(lobby).length;
     io.to(lobby.code).emit("vote_progress", {
@@ -366,16 +472,19 @@ io.on("connection", (socket) => {
 
   socket.on("force_tally_votes", ({ code }) => {
     const lobby = lobbies.get(code);
-    if (!lobby || lobby.state !== "voting" || socket.id !== lobby.hostId) return;
+    if (!lobby || lobby.state !== "voting" || socket.data.playerToken !== lobby.hostId) return;
     tallyVotesAndFinish(lobby, "host_ended");
   });
 
   socket.on("new_round", ({ code }) => {
     const lobby = lobbies.get(code);
-    if (!lobby || socket.id !== lobby.hostId) return;
+    if (!lobby || socket.data.playerToken !== lobby.hostId) return;
     lobby.state = "lobby";
     lobby.universe = null;
     lobby.spyId = null;
+    lobby.spyOptions = null;
+    lobby.categoryMeta = null;
+    lobby.lastResult = null;
     lobby.votes = new Map();
     clearRoundTimer(lobby);
     broadcastLobby(lobby);
@@ -391,32 +500,34 @@ io.on("connection", (socket) => {
 
   function handleDisconnect(socket, isDisconnect) {
     const code = socket.data.lobbyCode;
-    if (!code) return;
+    const token = socket.data.playerToken;
+    if (!code || !token) return;
     const lobby = lobbies.get(code);
     if (!lobby) return;
 
-    const player = lobby.players.get(socket.id);
+    const player = lobby.players.get(token);
     if (player) {
       if (isDisconnect) {
         player.connected = false;
       } else {
-        lobby.players.delete(socket.id);
+        lobby.players.delete(token);
       }
     }
     socket.leave(code);
     socket.data.lobbyCode = null;
+    socket.data.playerToken = null;
 
-    // Lobi boşaldıysa temizle
+    // Lobi boşaldıysa hemen silme; yeniden bağlanma için biraz bekle
     if (Array.from(lobby.players.values()).every((p) => !p.connected)) {
-      clearRoundTimer(lobby);
-      lobbies.delete(code);
+      scheduleEmptyLobbyCleanup(lobby);
+      broadcastLobby(lobby);
       return;
     }
 
-    // Host ayrıldıysa yeni host ata
-    if (lobby.hostId === socket.id) {
+    // Host ayrıldıysa / koptuysa yeni host ata
+    if (lobby.hostId === token) {
       const nextHost = Array.from(lobby.players.values()).find((p) => p.connected);
-      if (nextHost) lobby.hostId = nextHost.id;
+      if (nextHost) lobby.hostId = nextHost.token;
     }
 
     broadcastLobby(lobby);

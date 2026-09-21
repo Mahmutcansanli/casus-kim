@@ -265,18 +265,31 @@ $("btn-load-custom").onclick = () => {
 };
 
 // ---- Süre ayarı ----------------------------------------------------------
-function renderDurationChips(currentMinutes) {
+// Not: kategori çiplerinden farklı bir sınıf (.duration-chip) kullanılıyor ki
+// kategori seçimini senkronize eden ".category-chip" sorgusu bunları etkilemesin,
+// ve çipler her lobi güncellemesinde yeniden OLUŞTURULMAK yerine bir kere
+// oluşturulup sadece "seçili" durumu güncellensin (kategori çipleriyle aynı,
+// kanıtlanmış yöntem).
+function buildDurationChips() {
   const wrap = $("duration-list");
   wrap.innerHTML = "";
   DURATION_OPTIONS.forEach((m) => {
     const chip = document.createElement("div");
-    chip.className = "category-chip" + (m === currentMinutes ? " selected" : "");
+    chip.className = "duration-chip";
     chip.textContent = `${m} dk`;
+    chip.dataset.minutes = String(m);
     chip.onclick = () => {
       if (!isHost) return;
       socket.emit("set_round_duration", { code: lobbyCode, minutes: m });
     };
     wrap.appendChild(chip);
+  });
+}
+buildDurationChips();
+
+function syncDurationSelection(currentMinutes) {
+  document.querySelectorAll(".duration-chip").forEach((chip) => {
+    chip.classList.toggle("selected", Number(chip.dataset.minutes) === currentMinutes);
   });
 }
 
@@ -327,7 +340,7 @@ socket.on("lobby_update", (data) => {
     });
     updateCustomBoxVisibility();
     renderCustomList();
-    renderDurationChips(currentMinutes);
+    syncDurationSelection(currentMinutes);
     showScreen("screen-lobby");
   }
 });
