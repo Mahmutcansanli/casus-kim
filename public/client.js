@@ -48,6 +48,18 @@ function clearSession() {
 
 showScreen(loadSession() ? "screen-reconnecting" : "screen-name");
 
+// Güvenlik ağı: soket hiç bağlanamazsa (sunucu tamamen erişilemezse) bile
+// kullanıcı "Bağlanıyor…" ekranında sonsuza kadar takılı kalmasın.
+if (loadSession()) {
+  setTimeout(() => {
+    if ($("screen-reconnecting").classList.contains("active")) {
+      clearSession();
+      showScreen("screen-name");
+      $("name-error").textContent = "Sunucuya bağlanılamadı. İnternetini kontrol edip tekrar dene.";
+    }
+  }, 15000);
+}
+
 // Hem sayfa yenilenmesinden hem de oyun ortasında kısa bir bağlantı kopmasından
 // (wifi dalgalanması vb.) sonra socket.io her yeniden bağlandığında burası çalışır.
 // "Aktif oturum" ya bellekte (zaten katılmışız) ya da localStorage'da (sayfa yeni açıldı) olabilir.
@@ -60,8 +72,13 @@ socket.on("connect", () => {
   const session = currentSessionInfo();
   if (!session || !session.code || !session.token) return; // henüz bir oyuna katılmamışız
 
-  socket.emit("rejoin_lobby", { code: session.code, token: session.token }, (res) => {
-    if (res && res.success) {
+  showScreen("screen-reconnecting");
+
+  // .timeout(): sunucu cevap vermeden bağlantı koparsa (oda kapanmış, sunucu
+  // uykudan yeni uyanıyor vb.) sonsuza kadar beklemek yerine belirli bir süre
+  // sonra "err" ile geri döner, böylece kullanıcı ekranda asla takılı kalmaz.
+  socket.timeout(8000).emit("rejoin_lobby", { code: session.code, token: session.token }, (err, res) => {
+    if (!err && res && res.success) {
       myId = res.playerId;
       myName = res.name || session.name || myName;
       lobbyCode = res.code;
@@ -70,11 +87,15 @@ socket.on("connect", () => {
       // Doğru ekran birazdan gelecek lobby_update / game_started / vote_started /
       // round_result olaylarıyla otomatik ayarlanacak; bu arada güvenli bir varsayılan göster.
       showScreen("screen-lobby");
-    } else {
-      clearSession();
-      lobbyCode = null;
-      showScreen("screen-name");
+      return;
     }
+
+    clearSession();
+    lobbyCode = null;
+    showScreen("screen-name");
+    $("name-error").textContent = err
+      ? "Sunucuya bağlanılamadı. Lütfen tekrar dene."
+      : "Önceki oyun artık mevcut değil (oda kapanmış olabilir). Yeni bir oyun kurabilir ya da bir koda katılabilirsin.";
   });
 });
 
