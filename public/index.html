@@ -9,8 +9,16 @@
 <body>
 <div id="app">
 
+  <!-- EKRAN: Yeniden bağlanma -->
+  <section id="screen-reconnecting" class="screen">
+    <div class="card" style="text-align:center">
+      <h1>🕵️ Casus Kim?</h1>
+      <p class="hint">🔄 Önceki oyununa yeniden bağlanılıyor…</p>
+    </div>
+  </section>
+
   <!-- EKRAN: Giriş -->
-  <section id="screen-name" class="screen active">
+  <section id="screen-name" class="screen">
     <div class="card">
       <h1>🕵️ Casus Kim?</h1>
       <p class="subtitle">Arkadaşlarınla oyna, casusu bul ya da casus ol!</p>
@@ -43,6 +51,7 @@
         <h2>Lobi</h2>
         <div class="lobby-code">Kod: <span id="lobby-code-text">-----</span></div>
       </div>
+      <div class="duration-badge">⏱ Süre: <span id="duration-badge-text">5</span> dk</div>
 
       <h3>Oyuncular (<span id="player-count">0</span>)</h3>
       <ul id="player-list" class="player-list"></ul>
@@ -55,11 +64,18 @@
           <button id="btn-add-custom" class="btn secondary">Ekle</button>
         </div>
         <ul id="custom-universe-list" class="player-list"></ul>
+        <div class="inline-add">
+          <select id="select-saved-lists"><option value="">Kayıtlı listelerim…</option></select>
+          <button id="btn-load-custom" class="btn secondary">📂 Yükle</button>
+        </div>
+        <button id="btn-save-custom" class="btn text full">💾 Bu listeyi kaydet (sonraki oyunlarda kullan)</button>
       </div>
 
       <div id="host-controls" class="hidden">
         <h3>Kategoriler</h3>
         <div id="category-list" class="category-list"></div>
+        <h3>Süre</h3>
+        <div id="duration-list" class="category-list"></div>
         <button id="btn-start-game" class="btn primary full">🚀 Oyunu Başlat</button>
         <p class="hint">Başlamak için en az 3 oyuncu gerekir.</p>
       </div>

@@ -1,7 +1,7 @@
 const socket = io();
 
 // ---- Durum ---------------------------------------------------------
-let myId = null;
+let myId = null; // sunucudan gelen kalıcı oyuncu TOKEN'ı (socket.id değil)
 let myName = "";
 let lobbyCode = null;
 let isHost = false;
@@ -14,6 +14,9 @@ let hasVoted = false;
 let customUniverses = [];
 const CUSTOM_KEY = "ozel";
 const MIN_CUSTOM = 8;
+const DURATION_OPTIONS = [3, 5, 7, 10];
+const SESSION_KEY = "casusKimSession";
+const SAVED_LISTS_KEY = "casusKimSavedLists";
 
 // ---- Ekran yönetimi --------------------------------------------------
 function showScreen(id) {
@@ -22,6 +25,58 @@ function showScreen(id) {
 }
 
 function $(id) { return document.getElementById(id); }
+
+// ---- Oturum kalıcılığı (sayfa yenilense / bağlantı kopsa bile geri dönebilme) ----
+function saveSession() {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ code: lobbyCode, token: myId, name: myName }));
+  } catch (e) { /* localStorage yoksa sorun değil, oyun yine de çalışır */ }
+}
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* yok say */ }
+}
+
+showScreen(loadSession() ? "screen-reconnecting" : "screen-name");
+
+// Hem sayfa yenilenmesinden hem de oyun ortasında kısa bir bağlantı kopmasından
+// (wifi dalgalanması vb.) sonra socket.io her yeniden bağlandığında burası çalışır.
+// "Aktif oturum" ya bellekte (zaten katılmışız) ya da localStorage'da (sayfa yeni açıldı) olabilir.
+function currentSessionInfo() {
+  if (lobbyCode && myId) return { code: lobbyCode, token: myId, name: myName };
+  return loadSession();
+}
+
+socket.on("connect", () => {
+  const session = currentSessionInfo();
+  if (!session || !session.code || !session.token) return; // henüz bir oyuna katılmamışız
+
+  socket.emit("rejoin_lobby", { code: session.code, token: session.token }, (res) => {
+    if (res && res.success) {
+      myId = res.playerId;
+      myName = res.name || session.name || myName;
+      lobbyCode = res.code;
+      isHost = res.hostId === myId;
+      saveSession();
+      // Doğru ekran birazdan gelecek lobby_update / game_started / vote_started /
+      // round_result olaylarıyla otomatik ayarlanacak; bu arada güvenli bir varsayılan göster.
+      showScreen("screen-lobby");
+    } else {
+      clearSession();
+      lobbyCode = null;
+      showScreen("screen-name");
+    }
+  });
+});
 
 // ---- Giriş ekranı -----------------------------------------------------
 $("btn-goto-create").onclick = () => {
@@ -33,6 +88,7 @@ $("btn-goto-create").onclick = () => {
     myId = res.playerId;
     lobbyCode = res.code;
     isHost = true;
+    saveSession();
     showScreen("screen-lobby");
   });
 };
@@ -55,6 +111,7 @@ $("btn-join").onclick = () => {
     lobbyCode = res.code;
     isHost = res.hostId === myId;
     $("join-error").textContent = "";
+    saveSession();
     showScreen("screen-lobby");
   });
 };
@@ -133,6 +190,68 @@ $("input-custom-universe").addEventListener("keydown", (e) => {
   if (e.key === "Enter") submitCustomUniverse();
 });
 
+// ---- Kayıtlı listeler (tarayıcıda saklanır, sonraki oyunlarda kullanılır) ----
+function getSavedLists() {
+  try { return JSON.parse(localStorage.getItem(SAVED_LISTS_KEY) || "{}"); } catch (e) { return {}; }
+}
+
+function setSavedLists(obj) {
+  try { localStorage.setItem(SAVED_LISTS_KEY, JSON.stringify(obj)); } catch (e) { /* yok say */ }
+}
+
+function renderSavedListsSelect() {
+  const sel = $("select-saved-lists");
+  const lists = getSavedLists();
+  const names = Object.keys(lists);
+  sel.innerHTML = '<option value="">Kayıtlı listelerim…</option>';
+  names.forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = `${name} (${lists[name].length} isim)`;
+    sel.appendChild(opt);
+  });
+}
+renderSavedListsSelect();
+
+$("btn-save-custom").onclick = () => {
+  if (!customUniverses.length) {
+    alert("Kaydedilecek bir liste yok, önce en az bir isim ekleyin.");
+    return;
+  }
+  const name = (prompt("Bu listeye bir isim verin:", "Listem") || "").trim().slice(0, 30);
+  if (!name) return;
+  const lists = getSavedLists();
+  lists[name] = [...customUniverses];
+  setSavedLists(lists);
+  renderSavedListsSelect();
+  $("select-saved-lists").value = name;
+};
+
+$("btn-load-custom").onclick = () => {
+  const name = $("select-saved-lists").value;
+  if (!name) return;
+  const lists = getSavedLists();
+  const values = lists[name] || [];
+  if (!values.length) return;
+  socket.emit("add_custom_universes_bulk", { code: lobbyCode, values });
+};
+
+// ---- Süre ayarı ----------------------------------------------------------
+function renderDurationChips(currentMinutes) {
+  const wrap = $("duration-list");
+  wrap.innerHTML = "";
+  DURATION_OPTIONS.forEach((m) => {
+    const chip = document.createElement("div");
+    chip.className = "category-chip" + (m === currentMinutes ? " selected" : "");
+    chip.textContent = `${m} dk`;
+    chip.onclick = () => {
+      if (!isHost) return;
+      socket.emit("set_round_duration", { code: lobbyCode, minutes: m });
+    };
+    wrap.appendChild(chip);
+  });
+}
+
 $("btn-start-game").onclick = () => {
   socket.emit("start_game", { code: lobbyCode });
 };
@@ -144,6 +263,7 @@ function leaveLobby() {
   socket.emit("leave_lobby");
   lobbyCode = null;
   isHost = false;
+  clearSession();
   stopCountdown();
   showScreen("screen-name");
 }
@@ -166,6 +286,9 @@ socket.on("lobby_update", (data) => {
     list.appendChild(li);
   });
 
+  const currentMinutes = Math.round((data.roundDurationMs || 5 * 60 * 1000) / 60000);
+  $("duration-badge-text").textContent = currentMinutes;
+
   if (data.state === "lobby") {
     $("host-controls").classList.toggle("hidden", !isHost);
     $("guest-waiting").classList.toggle("hidden", isHost);
@@ -175,6 +298,7 @@ socket.on("lobby_update", (data) => {
       chip.classList.toggle("selected", selectedCategories.has(chip.dataset.key));
     });
     renderCustomList();
+    renderDurationChips(currentMinutes);
     showScreen("screen-lobby");
   }
 });
@@ -332,5 +456,3 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
-
-socket.on("connect", () => { myId = socket.id; });
