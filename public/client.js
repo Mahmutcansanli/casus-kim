@@ -22,6 +22,10 @@ const SAVED_LISTS_KEY = "casusKimSavedLists";
 function showScreen(id) {
   document.querySelectorAll(".screen").forEach((el) => el.classList.remove("active"));
   document.getElementById(id).classList.add("active");
+  // Casus koyu teması sadece oyun ve tahmin ekranlarında açık kalır
+  if (id !== "screen-game" && id !== "screen-spy-guess") {
+    document.body.classList.remove("spy-mode");
+  }
 }
 
 function $(id) { return document.getElementById(id); }
@@ -375,6 +379,7 @@ socket.on("game_started", (data) => {
   }
 
   showScreen("screen-game");
+  document.body.classList.toggle("spy-mode", data.role === "spy");
   startCountdown();
 });
 
